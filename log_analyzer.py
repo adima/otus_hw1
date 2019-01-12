@@ -4,6 +4,9 @@
 import io
 import os
 import re
+import gzip
+import argparse
+import json
 # log_format ui_short '$remote_addr  $remote_user $http_x_real_ip [$time_local] "$request" '
 #                     '$status $body_bytes_sent "$http_referer" '
 #                     '"$http_user_agent" "$http_x_forwarded_for" "$http_X_REQUEST_ID" "$http_X_RB_USER" '
@@ -33,9 +36,12 @@ def choose_log(log_dir):
     else:
         return sorted(fls)[-1]
 
-def parse_log(log_dir, log_name, smoke_test=False):
+
+def parse_log(log_dir, log_name, report_size, smoke_test=False, **kwargs):
     # 'nginx-access-ui.log-20170630'
-    with io.open(os.path.join(log_dir, log_name)) as f:
+    reader = gzip if log_name[-2:] == 'gz' else io
+
+    with reader.open(os.path.join(log_dir, log_name)) as f:
         #     stats_url_ct = Counter()
         stats_url_time_sum = dict()
         line_ct = 0
@@ -66,12 +72,22 @@ def parse_log(log_dir, log_name, smoke_test=False):
                'time_median': median(value),
                }
               for key, value in stats_url_time_sum.items()]
-    return result
-    
+    res_sorted = sorted(result, key=lambda x: x['time_sum'], reverse=True)
+
+    return res_sorted[: report_size]
 
 
 def main():
-    parse_log(log_dir='.', log_name='nginx-access-ui.log-20170630', smoke_test=True)
+    arg_parser = argparse.ArgumentParser(description='Log analyzer arguments')
+    arg_parser.add_argument("--config", type=str, default='./config')
+    args = arg_parser.parse_args()
+    config_file = json.load(args.config)
+    config.update(config_file)
+
+    parse_log(log_dir='logs',
+              log_name='nginx-access-ui.log-20170630.gz',
+              report_size=50,
+              smoke_test=True)
 
 if __name__ == "__main__":
     main()
