@@ -7,6 +7,7 @@ import re
 import gzip
 import argparse
 import json
+import logging
 
 from string import Template
 
@@ -148,10 +149,6 @@ webpage_template = Template("""<!doctype html>
   </script>
 </body>
 </html>""")
-# log_format ui_short '$remote_addr  $remote_user $http_x_real_ip [$time_local] "$request" '
-#                     '$status $body_bytes_sent "$http_referer" '
-#                     '"$http_user_agent" "$http_x_forwarded_for" "$http_X_REQUEST_ID" "$http_X_RB_USER" '
-#                     '$request_time';
 
 config = {
     "REPORT_SIZE": 1000,
@@ -173,17 +170,15 @@ def choose_log(log_dir):
     fls = os.listdir(log_dir)
     fls = [f for f in fls if re.match(r'nginx-access-ui\.log-\d{6}(\.gz)?', f)]
     if len(fls) == 0:
-        pass
+        return
     else:
         return sorted(fls)[-1]
 
 
-def parse_log(log_dir, log_name, report_size, smoke_test=False, **kwargs):
-    # 'nginx-access-ui.log-20170630'
+def parse_log(log_dir, log_name, report_size, smoke_test=False):
     reader = gzip if log_name[-2:] == 'gz' else io
 
     with reader.open(os.path.join(log_dir, log_name)) as f:
-        #     stats_url_ct = Counter()
         stats_url_time_sum = dict()
         line_ct = 0
         req_time_total = 0
@@ -201,9 +196,8 @@ def parse_log(log_dir, log_name, report_size, smoke_test=False, **kwargs):
 
             if smoke_test and n > 1000:
                 break
-    #         stats_url_time_sum[url] += req_time
-    
-    result = [{'url': key,
+
+    result = ({'url': key,
                'count': len(value),
                'count_perc': len(value) / float(line_ct),
                'time_sum': sum(value),
@@ -212,38 +206,45 @@ def parse_log(log_dir, log_name, report_size, smoke_test=False, **kwargs):
                'time_max': max(value),
                'time_median': median(value),
                }
-              for key, value in stats_url_time_sum.items()]
+              for key, value in stats_url_time_sum.items())
     res_sorted = sorted(result, key=lambda x: x['time_sum'], reverse=True)
 
     return res_sorted[: report_size]
 
 
-def main():
+def main(smoke_test=False):
     arg_parser = argparse.ArgumentParser(description='Log analyzer arguments')
     arg_parser.add_argument("--config", type=str, default='./config')
     args = arg_parser.parse_args()
     with io.open(args.config) as cf:
         config_file = json.load(cf)
     config.update(config_file)
+
+    paths = [config['LOG_DIR'], config['REPORT_DIR'], 'done']
+    for p in paths:
+        if not os.path.exists(p):
+            os.makedirs(p)
+
     log_name = choose_log(config['LOG_DIR'])
+    if log_name is None:
+        return
 
     result = parse_log(log_dir=config['LOG_DIR'],
               log_name=log_name,
               report_size=config['REPORT_SIZE'],
-              smoke_test=True)
+              smoke_test=smoke_test)
 
     rendered_temp = webpage_template.safe_substitute(dict(table_json=result))
 
+
     html_path = os.path.join(config['REPORT_DIR'], log_name + '.html')
     with io.open(html_path, 'w') as fh:
-        fh.write(rendered_temp)
-
+        fh.write(rendered_temp.decode('utf-8'))
 
     os.rename(os.path.join(config['LOG_DIR'], log_name),
               os.path.join('done', log_name))
 
-    # TODO check config dirs
 
 
 if __name__ == "__main__":
-    main()
+    main(smoke_test=True)
