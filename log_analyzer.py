@@ -153,7 +153,8 @@ webpage_template = Template("""<!doctype html>
 config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
-    "LOG_DIR": "./log"
+    "LOG_DIR": "./log",
+    "ERRORS_THRSH_PCT": .8
 }
 
 def median(lst):
@@ -213,12 +214,19 @@ def parse_log(log_dir, log_name, report_size, smoke_test=False):
 
 
 def main(smoke_test=False):
+    if smoke_test:
+        logging.info('Starting if smoke test mode')
     arg_parser = argparse.ArgumentParser(description='Log analyzer arguments')
     arg_parser.add_argument("--config", type=str, default='./config')
     args = arg_parser.parse_args()
     with io.open(args.config) as cf:
         config_file = json.load(cf)
     config.update(config_file)
+
+    logging_path = config.get('logging_path')
+    logging.basicConfig(filename=logging_path,
+                        format='[%(asctime)s] %(levelname).1s %(message)s',
+                        datefmt='%Y.%m.%d %H:%M:%S', level=logging.DEBUG)
 
     paths = [config['LOG_DIR'], config['REPORT_DIR'], 'done']
     for p in paths:
@@ -227,6 +235,7 @@ def main(smoke_test=False):
 
     log_name = choose_log(config['LOG_DIR'])
     if log_name is None:
+        logging.info("No logs found")
         return
 
     result = parse_log(log_dir=config['LOG_DIR'],
@@ -235,7 +244,6 @@ def main(smoke_test=False):
               smoke_test=smoke_test)
 
     rendered_temp = webpage_template.safe_substitute(dict(table_json=result))
-
 
     html_path = os.path.join(config['REPORT_DIR'], log_name + '.html')
     with io.open(html_path, 'w') as fh:
