@@ -227,30 +227,32 @@ def main(smoke_test=False):
     logging.basicConfig(filename=logging_path,
                         format='[%(asctime)s] %(levelname).1s %(message)s',
                         datefmt='%Y.%m.%d %H:%M:%S', level=logging.DEBUG)
+    try:
+        paths = [config['LOG_DIR'], config['REPORT_DIR'], 'done']
+        for p in paths:
+            if not os.path.exists(p):
+                os.makedirs(p)
 
-    paths = [config['LOG_DIR'], config['REPORT_DIR'], 'done']
-    for p in paths:
-        if not os.path.exists(p):
-            os.makedirs(p)
+        log_name = choose_log(config['LOG_DIR'])
+        if log_name is None:
+            logging.info("No logs found")
+            return
 
-    log_name = choose_log(config['LOG_DIR'])
-    if log_name is None:
-        logging.info("No logs found")
-        return
+        result = parse_log(log_dir=config['LOG_DIR'],
+                  log_name=log_name,
+                  report_size=config['REPORT_SIZE'],
+                  smoke_test=smoke_test)
 
-    result = parse_log(log_dir=config['LOG_DIR'],
-              log_name=log_name,
-              report_size=config['REPORT_SIZE'],
-              smoke_test=smoke_test)
+        rendered_temp = webpage_template.safe_substitute(dict(table_json=result))
 
-    rendered_temp = webpage_template.safe_substitute(dict(table_json=result))
+        html_path = os.path.join(config['REPORT_DIR'], log_name + '.html')
+        with io.open(html_path, 'w') as fh:
+            fh.write(rendered_temp.decode('utf-8'))
 
-    html_path = os.path.join(config['REPORT_DIR'], log_name + '.html')
-    with io.open(html_path, 'w') as fh:
-        fh.write(rendered_temp.decode('utf-8'))
-
-    os.rename(os.path.join(config['LOG_DIR'], log_name),
-              os.path.join('done', log_name))
+        os.rename(os.path.join(config['LOG_DIR'], log_name),
+                  os.path.join('done', log_name))
+    except:
+        logging.exception("Something unexpected happened")
 
 
 
