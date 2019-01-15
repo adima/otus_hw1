@@ -154,7 +154,7 @@ config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
-    "ERRORS_THRSH_PCT": .8
+    "ERRORS_THRSH": .8
 }
 
 def median(lst):
@@ -176,27 +176,36 @@ def choose_log(log_dir):
         return sorted(fls)[-1]
 
 
-def parse_log(log_dir, log_name, report_size, smoke_test=False):
+def parse_log(log_dir, log_name, report_size, errors_thrshold, smoke_test=False):
     reader = gzip if log_name[-2:] == 'gz' else io
 
     with reader.open(os.path.join(log_dir, log_name)) as f:
         stats_url_time_sum = dict()
         line_ct = 0
         req_time_total = 0
+        errors_ct = 0
         for n, l in enumerate(f):
-            line_ct += 1
-            l_spl = l.strip().split(' ')
-            url = l_spl[7]
-            req_time = float(l_spl[-1])
-            req_time_total += req_time
-            # stats_url_ct[url] += 1
-            if url in stats_url_time_sum.keys():
-                stats_url_time_sum[url].append(req_time)
-            else:
-                stats_url_time_sum[url] = [req_time]
+            try:
+                line_ct += 1
+                l_spl = l.strip().split(' ')
+                url = l_spl[7]
+                req_time = float(l_spl[-1])
+                req_time_total += req_time
+                # stats_url_ct[url] += 1
+                if url in stats_url_time_sum.keys():
+                    stats_url_time_sum[url].append(req_time)
+                else:
+                    stats_url_time_sum[url] = [req_time]
 
-            if smoke_test and n > 1000:
-                break
+                if smoke_test and n > 1000:
+                    break
+            except:
+                logging.error("error parsing line %s " % n )
+                errors_ct += 1
+
+        if float(errors_ct) / line_ct >= errors_thrshold:
+            logging.error("Error threshold exceeded")
+
 
     result = ({'url': key,
                'count': len(value),
@@ -234,18 +243,21 @@ def main(smoke_test=False):
                 os.makedirs(p)
 
         log_name = choose_log(config['LOG_DIR'])
+        log_date = log_name[-11:-3] if log_name[-3:] == '.gz' else log_name[-8:]
         if log_name is None:
             logging.info("No logs found")
             return
 
         result = parse_log(log_dir=config['LOG_DIR'],
-                  log_name=log_name,
-                  report_size=config['REPORT_SIZE'],
-                  smoke_test=smoke_test)
+                           log_name=log_name,
+                           report_size=config['REPORT_SIZE'],
+                           errors_thrshold=config['ERRORS_THRSH'],
+                           smoke_test=smoke_test)
 
         rendered_temp = webpage_template.safe_substitute(dict(table_json=result))
 
-        html_path = os.path.join(config['REPORT_DIR'], log_name + '.html')
+        html_path = os.path.join(config['REPORT_DIR'], 'report-%s.%s.%s.html' % (log_date[:4],
+                                                                                 log_date[4:6], log_date[6:8]))
         with io.open(html_path, 'w') as fh:
             fh.write(rendered_temp.decode('utf-8'))
 
