@@ -206,7 +206,7 @@ def parse_log(log_dir, log_name, report_size, errors_thrshold, smoke_test=False)
         if float(errors_ct) / line_ct >= errors_thrshold:
             logging.error("Error threshold exceeded")
 
-
+    logging.info("parsed %s lines" % line_ct)
     result = ({'url': key,
                'count': len(value),
                'count_perc': len(value) / float(line_ct),
@@ -223,8 +223,6 @@ def parse_log(log_dir, log_name, report_size, errors_thrshold, smoke_test=False)
 
 
 def main(smoke_test=False):
-    if smoke_test:
-        logging.info('Starting if smoke test mode')
     arg_parser = argparse.ArgumentParser(description='Log analyzer arguments')
     arg_parser.add_argument("--config", type=str, default='./config')
     args = arg_parser.parse_args()
@@ -237,6 +235,9 @@ def main(smoke_test=False):
                         format='[%(asctime)s] %(levelname).1s %(message)s',
                         datefmt='%Y.%m.%d %H:%M:%S')
     logging.getLogger().setLevel(logging.DEBUG)
+
+    if smoke_test:
+        logging.info('Starting in smoke test mode')
 
     try:
         paths = [config['LOG_DIR'], config['REPORT_DIR'], 'done']
