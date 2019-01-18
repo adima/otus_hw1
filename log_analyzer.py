@@ -235,7 +235,9 @@ def main(smoke_test=False):
     logging_path = config.get('logging_path')
     logging.basicConfig(filename=logging_path,
                         format='[%(asctime)s] %(levelname).1s %(message)s',
-                        datefmt='%Y.%m.%d %H:%M:%S', level=logging.DEBUG)
+                        datefmt='%Y.%m.%d %H:%M:%S')
+    logging.getLogger().setLevel(logging.DEBUG)
+
     try:
         paths = [config['LOG_DIR'], config['REPORT_DIR'], 'done']
         for p in paths:
@@ -243,10 +245,10 @@ def main(smoke_test=False):
                 os.makedirs(p)
 
         log_name = choose_log(config['LOG_DIR'])
-        log_date = log_name[-11:-3] if log_name[-3:] == '.gz' else log_name[-8:]
         if log_name is None:
-            logging.info("No logs found")
+            logging.info("No logs found to parse")
             return
+        log_date = log_name[-11:-3] if log_name[-3:] == '.gz' else log_name[-8:]
 
         result = parse_log(log_dir=config['LOG_DIR'],
                            log_name=log_name,
