@@ -1,0 +1,5 @@
+{
+  "LOG_DIR": "log_test",
+  "REPORT_DIR": "report_test",
+  "DONE_DIR": "done_test"
+}
