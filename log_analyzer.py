@@ -8,6 +8,9 @@ import gzip
 import argparse
 import json
 import logging
+import unittest
+from copy import copy
+import shutil
 
 from string import Template
 
@@ -154,7 +157,8 @@ config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
-    "ERRORS_THRSH": .8
+    "ERRORS_THRSH": .8,
+    "DONE_DIR": "./done"
 }
 
 def median(lst):
@@ -221,15 +225,16 @@ def parse_log(log_dir, log_name, report_size, errors_thrshold, smoke_test=False)
 
     return res_sorted[: report_size]
 
-
-def main(smoke_test=False):
-    arg_parser = argparse.ArgumentParser(description='Log analyzer arguments')
-    arg_parser.add_argument("--config", type=str, default='./config')
-    args = arg_parser.parse_args()
-    with io.open(args.config) as cf:
+def get_config(cfg_path):
+    global config
+    with io.open(cfg_path) as cf:
         config_file = json.load(cf)
     config.update(config_file)
+    return copy(config)
 
+
+
+def main(config, smoke_test=False):
     logging_path = config.get('logging_path')
     logging.basicConfig(filename=logging_path,
                         format='[%(asctime)s] %(levelname).1s %(message)s',
@@ -240,7 +245,7 @@ def main(smoke_test=False):
         logging.info('Starting in smoke test mode')
 
     try:
-        paths = [config['LOG_DIR'], config['REPORT_DIR'], 'done']
+        paths = [config['LOG_DIR'], config['REPORT_DIR'], config['DONE_DIR'] ]
         for p in paths:
             if not os.path.exists(p):
                 os.makedirs(p)
@@ -269,7 +274,36 @@ def main(smoke_test=False):
     except:
         logging.exception("Something unexpected happened")
 
+def check_and_clear_test_folders(config):
+    paths = [config['LOG_DIR'], config['REPORT_DIR'], config['DONE_DIR']]
+    for p in paths:
+        if not os.path.exists(p):
+            os.makedirs(p)
+    for p in paths:
+        fls = os.listdir(p)
+        [os.remove(os.path.join(p, f)) for f in fls]
 
+
+class ResultTest(unittest.TestCase):
+    def test_works_ok_if_no_logs(self):
+        config = get_config('config_test')
+        check_and_clear_test_folders(config)
+        log_dir = config['LOG_DIR']
+        res = choose_log(log_dir)
+        self.assertTrue(res is None)
+
+    def test_works_ok_with_gz(self):
+        config = get_config('config_test')
+        check_and_clear_test_folders(config)
+        log_dir = config['LOG_DIR']
+        shutil.copy2('log_source/nginx-access-ui.log-20170630.gz', log_dir)
+        main(config, smoke_test=True)
+        res = os.listdir(config['REPORT_DIR'])
+        self.assertTrue('report-2017.06.30.html' in res)
 
 if __name__ == "__main__":
-    main(smoke_test=True)
+    arg_parser = argparse.ArgumentParser(description='Log analyzer arguments')
+    arg_parser.add_argument("--config", type=str, default='./config')
+    args = arg_parser.parse_args()
+    config_loc = get_config(args.config)
+    main(config_loc, smoke_test=False)
