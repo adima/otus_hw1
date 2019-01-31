@@ -13,143 +13,12 @@ from copy import copy
 from string import Template
 
 
-webpage_template = Template("""<!doctype html>
+with open('report.html', 'r') as f:
+    try:
+        webpage_template = f.read().decode('utf-8')
+    except UnicodeDecodeError:
+        webpage_template = f.read().decode('cp1251')
 
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>rbui log analysis report</title>
-  <meta name="description" content="rbui log analysis report">
-  <style type="text/css">
-    html, body {
-      background-color: black;
-    }
-    th {
-      text-align: center;
-      color: silver;
-      font-style: bold;
-      padding: 5px;
-      cursor: pointer;
-    }
-    table {
-      width: auto;
-      border-collapse: collapse;
-      margin: 1%;
-      color: silver;
-    }
-    td {
-      text-align: right;
-      font-size: 1.1em;
-      padding: 5px;
-    }
-    .report-table-body-cell-url {
-      text-align: left;
-      width: 20%;
-    }
-    .clipped {
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      overflow:hidden !important;
-      max-width: 700px;
-      word-wrap: break-word;
-      display:inline-block;
-    }
-    .url {
-      cursor: pointer;
-      color: #729FCF;
-    }
-    .alert {
-      color: red;
-    }
-  </style>
-</head>
-
-<body>
-  <table border="1" class="report-table">
-  <thead>
-    <tr class="report-table-header-row">
-    </tr>
-  </thead>
-  <tbody class="report-table-body">
-  </tbody>
-
-  <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
-  <script type="text/javascript" src="jquery.tablesorter.min.js"></script> 
-  <script type="text/javascript">
-  !function($) {
-    var table = $table_json;
-    var reportDates;
-    var columns = new Array();
-    var lastRow = 150;
-    var $table = $(".report-table-body");
-    var $header = $(".report-table-header-row");
-    var $selector = $(".report-date-selector");
-
-    $(document).ready(function() {
-      $(window).bind("scroll", bindScroll);
-        var row = table[0];
-        for (k in row) {
-          columns.push(k);
-        }
-        columns = columns.sort();
-        columns = columns.slice(columns.length -1, columns.length).concat(columns.slice(0, columns.length -1));
-        drawColumns();
-        drawRows(table.slice(0, lastRow));
-        $(".report-table").tablesorter(); 
-    });
-
-    function drawColumns() {
-      for (var i = 0; i < columns.length; i++) {
-        var $th = $("<th></th>").text(columns[i])
-                                .addClass("report-table-header-cell")
-        $header.append($th);
-      }
-    }
-
-    function drawRows(rows) {
-      for (var i = 0; i < rows.length; i++) {
-        var row = rows[i];
-        var $row = $("<tr></tr>").addClass("report-table-body-row");
-        for (var j = 0; j < columns.length; j++) {
-          var columnName = columns[j];
-          var $cell = $("<td></td>").addClass("report-table-body-cell");
-          if (columnName == "url") {
-            var url = "https://rb.mail.ru" + row[columnName];
-            var $link = $("<a></a>").attr("href", url)
-                                    .attr("title", url)
-                                    .attr("target", "_blank")
-                                    .addClass("clipped")
-                                    .addClass("url")
-                                    .text(row[columnName]);
-            $cell.addClass("report-table-body-cell-url");
-            $cell.append($link);
-          }
-          else {
-            $cell.text(row[columnName]);
-            if (columnName == "time_avg" && row[columnName] > 0.9) {
-              $cell.addClass("alert");
-            }
-          }
-          $row.append($cell);
-        }
-        $table.append($row);
-      }
-      $(".report-table").trigger("update"); 
-    }
-
-    function bindScroll() {
-      if($(window).scrollTop() == $(document).height() - $(window).height()) {
-        if (lastRow < 1000) {
-          drawRows(table.slice(lastRow, lastRow + 50));
-          lastRow += 50;
-        }
-      }
-    }
-
-  }(window.jQuery)
-  </script>
-</body>
-</html>""")
 
 config = {
     "REPORT_SIZE": 1000,
@@ -183,11 +52,11 @@ def choose_log(log_dir):
     :return:
     """
     fls = os.listdir(log_dir)
-    fls = [f for f in fls if re.match(r'nginx-access-ui\.log-\d{6}(\.gz)?', f)]
-    if len(fls) == 0:
+    fls = [fl for fl in fls if re.match(r'nginx-access-ui\.log-\d{6}(\.gz)?', fl)]
+    if not fls:
         return
     else:
-        return sorted(fls)[-1]
+        return fls[-1]
 
 
 def open_log_file(log_name):
@@ -198,12 +67,12 @@ def open_log_file(log_name):
     """
     reader = gzip if log_name[-2:] == 'gz' else io
     with reader.open(log_name) as f:
-        for l in f:
+        for line in f:
             try:
-                l = l.decode('utf-8')
-            except:
-                l = l.decode('cp1251')
-            yield l
+                line = line.decode('utf-8')
+            except UnicodeDecodeError:
+                line = line.decode('cp1251')
+            yield line
 
 
 def parse_log(log_dir, log_name, report_size, errors_thrshold, smoke_test=False):
@@ -220,15 +89,15 @@ def parse_log(log_dir, log_name, report_size, errors_thrshold, smoke_test=False)
     line_ct = 0
     req_time_total = 0
     errors_ct = 0
-    for n, l in enumerate(open_log_file(os.path.join(log_dir, log_name))):
+    for n, line in enumerate(open_log_file(os.path.join(log_dir, log_name))):
         try:
             line_ct += 1
-            l_spl = l.strip().split(' ')
+            l_spl = line.strip().split(' ')
             url = l_spl[7]
             req_time = float(l_spl[-1])
             req_time_total += req_time
             if n % 100 == 0:
-                print('Parsed %s lines' % n)
+                logging.info('Parsed %s lines' % n)
             if url in stats_url_time_sum.keys():
                 stats_url_time_sum[url].append(req_time)
             else:
@@ -259,17 +128,18 @@ def parse_log(log_dir, log_name, report_size, errors_thrshold, smoke_test=False)
     return res_sorted[: report_size]
 
 
-def get_config(cfg_path):
+def get_config(gen_config, cfg_path):
     """
     Берет конфиг из заданного файла и апдейтит локальный конфиг
     :param cfg_path:  путь к конфигу
     :return:
     """
-    global config
     with io.open(cfg_path) as cf:
         config_file = json.load(cf)
-    config.update(config_file)
-    return copy(config)
+
+    upd_config = copy(gen_config)
+    upd_config.update(config_file)
+    return upd_config
 
 
 def main(local_config, smoke_test=False):
@@ -290,15 +160,15 @@ def main(local_config, smoke_test=False):
 
     try:
         paths = [local_config['LOG_DIR'], local_config['REPORT_DIR'], local_config['DONE_DIR']]
-        for p in paths:
-            if not os.path.exists(p):
-                os.makedirs(p)
+        for path in paths:
+            if not os.path.exists(path):
+                os.makedirs(path)
 
         log_name = choose_log(local_config['LOG_DIR'])
         if log_name is None:
             logging.info("No logs found to parse")
             return
-        log_date = log_name[-11:-3] if log_name[-3:] == '.gz' else log_name[-8:]
+        log_date = log_name[-11:-3] if log_name.endswith('.gz') else log_name[-8:]
 
         result = parse_log(log_dir=local_config['LOG_DIR'],
                            log_name=log_name,
@@ -326,17 +196,18 @@ def check_and_clear_test_folders(test_config):
     :return:
     """
     paths = [test_config['LOG_DIR'], test_config['REPORT_DIR'], test_config['DONE_DIR']]
-    for p in paths:
-        if not os.path.exists(p):
-            os.makedirs(p)
-    for p in paths:
-        fls = os.listdir(p)
-        [os.remove(os.path.join(p, f)) for f in fls]
+    for path in paths:
+        if not os.path.exists(path):
+            os.makedirs(path)
+    for path in paths:
+        fls = os.listdir(path)
+        for fl in fls:
+            os.remove(os.path.join(path, fl))
 
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser(description='Log analyzer arguments')
     arg_parser.add_argument("--config", type=str, default='./config')
     args = arg_parser.parse_args()
-    config_loc = get_config(args.config)
+    config_loc = get_config(config, args.config)
     main(config_loc, smoke_test=False)
