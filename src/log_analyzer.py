@@ -9,15 +9,18 @@ import argparse
 import json
 import logging
 from copy import copy
+import unittest
+import shutil
+
 
 from string import Template
 
 
 with open('report.html', 'r') as f:
     try:
-        webpage_template = f.read().decode('utf-8')
+        webpage_template = Template(f.read().decode('utf-8'))
     except UnicodeDecodeError:
-        webpage_template = f.read().decode('cp1251')
+        webpage_template = Template(f.read().decode('cp1251'))
 
 
 config = {
@@ -33,7 +36,7 @@ def median(lst):
     """
     Медиана для списка значений
     :param lst: список значений
-    :return:
+    :return: медианна
     """
     sortedLst = sorted(lst)
     lstLen = len(lst)
@@ -49,14 +52,15 @@ def choose_log(log_dir):
     """
     Выбирает лог с последней датой
     :param log_dir: директория с логами
-    :return:
+    :return: файл лога
     """
     fls = os.listdir(log_dir)
-    fls = [fl for fl in fls if re.match(r'nginx-access-ui\.log-\d{6}(\.gz)?', fl)]
+    fls = [re.match(r'nginx-access-ui\.log-\d{6}(\.gz)?', fl) for fl in fls]
+    fls = [fl for fl in fls if fl is not None]
     if not fls:
-        return
+        return None, None
     else:
-        return fls[-1]
+        return fls[-1].group(0), fls[-1].group("date")
 
 
 def open_log_file(log_name):
@@ -65,7 +69,7 @@ def open_log_file(log_name):
     :param log_name: имя лога
     :return:
     """
-    reader = gzip if log_name[-2:] == 'gz' else io
+    reader = gzip if log_name.endswith('gz') else io
     with reader.open(log_name) as f:
         for line in f:
             try:
@@ -75,7 +79,19 @@ def open_log_file(log_name):
             yield line
 
 
-def parse_log(log_dir, log_name, report_size, errors_thrshold, smoke_test=False):
+def parse_line(line):
+    """
+    Функция, которая парсит строку лога
+    :param line: строка лога
+    :return: url, время запроса
+    """
+    l_spl = line.strip().split(' ')
+    url = l_spl[7]
+    req_time = float(l_spl[-1])
+    return url, req_time
+
+
+def parse_log(log_path, report_size, errors_thrshold, smoke_test=False):
     """
     Функция, которая извлекает заданные статистики из лога
     :param log_dir: директория лога
@@ -83,18 +99,16 @@ def parse_log(log_dir, log_name, report_size, errors_thrshold, smoke_test=False)
     :param report_size: количество url-ов с наибольшим временем обработки, которые должны быть в отчете
     :param errors_thrshold: допустимый процент строк, обработанных с ошибкой
     :param smoke_test: флаг для тестирования (обрабатывает первые 1000 строк если True)
-    :return:
+    :return: отчет
     """
     stats_url_time_sum = dict()
     line_ct = 0
     req_time_total = 0
     errors_ct = 0
-    for n, line in enumerate(open_log_file(os.path.join(log_dir, log_name))):
+    for n, line in enumerate(open_log_file(log_path)):
         try:
             line_ct += 1
-            l_spl = line.strip().split(' ')
-            url = l_spl[7]
-            req_time = float(l_spl[-1])
+            url, req_time = parse_line(line)
             req_time_total += req_time
             if n % 100 == 0:
                 logging.info('Parsed %s lines' % n)
@@ -132,7 +146,7 @@ def get_config(gen_config, cfg_path):
     """
     Берет конфиг из заданного файла и апдейтит локальный конфиг
     :param cfg_path:  путь к конфигу
-    :return:
+    :return: обновленный конфиг
     """
     with io.open(cfg_path) as cf:
         config_file = json.load(cf)
@@ -164,14 +178,12 @@ def main(local_config, smoke_test=False):
             if not os.path.exists(path):
                 os.makedirs(path)
 
-        log_name = choose_log(local_config['LOG_DIR'])
+        log_name, log_date = choose_log(local_config['LOG_DIR'])
         if log_name is None:
             logging.info("No logs found to parse")
             return
-        log_date = log_name[-11:-3] if log_name.endswith('.gz') else log_name[-8:]
 
-        result = parse_log(log_dir=local_config['LOG_DIR'],
-                           log_name=log_name,
+        result = parse_log(log_path=os.path.join(local_config['LOG_DIR'], log_name),
                            report_size=local_config['REPORT_SIZE'],
                            errors_thrshold=local_config['ERRORS_THRSH'],
                            smoke_test=smoke_test)
@@ -205,7 +217,35 @@ def check_and_clear_test_folders(test_config):
             os.remove(os.path.join(path, fl))
 
 
+class ResultTest(unittest.TestCase):
+    def test_works_ok_if_no_logs(self):
+        """
+        Проверяет, работает ли пайплайн, если в папке нет файлов для обработки
+        :return:
+        """
+        config = get_config('config_test')
+        check_and_clear_test_folders(config)
+        log_dir = config['LOG_DIR']
+        res = choose_log(log_dir)
+        self.assertTrue(res is None)
+
+    def test_works_ok_with_gz(self):
+        """
+        Проверяет, отрабатывает ли пайплайн на файлах .gz
+        :return:
+        """
+        config = get_config('config_test')
+        check_and_clear_test_folders(config)
+        log_dir = config['LOG_DIR']
+        shutil.copy2('log_source/nginx-access-ui.log-20170630.gz', log_dir)
+        main(config, smoke_test=True)
+        res = os.listdir(config['REPORT_DIR'])
+        self.assertTrue('report-2017.06.30.html' in res)
+
+
+
 if __name__ == "__main__":
+    unittest.main()
     arg_parser = argparse.ArgumentParser(description='Log analyzer arguments')
     arg_parser.add_argument("--config", type=str, default='./config')
     args = arg_parser.parse_args()
