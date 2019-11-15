@@ -16,11 +16,7 @@ import shutil
 from string import Template
 
 
-with open('report.html', 'r') as f:
-    try:
-        webpage_template = Template(f.read().decode('utf-8'))
-    except UnicodeDecodeError:
-        webpage_template = Template(f.read().decode('cp1251'))
+
 
 
 config = {
@@ -30,6 +26,20 @@ config = {
     "ERRORS_THRSH": .8,
     "DONE_DIR": "./done"
 }
+
+def read_webpage_template(template_path='report.html'):
+    """
+    Функция читает и возвращает темплейт для отчета
+    :param template_path:
+    :return:
+    """
+    with open('report.html', 'r') as f:
+        try:
+            webpage_template = Template(f.read().decode('utf-8'))
+        except UnicodeDecodeError:
+            webpage_template = Template(f.read().decode('cp1251'))
+
+    return webpage_template
 
 
 def median(lst):
@@ -55,15 +65,24 @@ def choose_log(log_dir):
     :return: файл лога
     """
     fls = os.listdir(log_dir)
-    fls = [re.match(r'nginx-access-ui\.log-\d{6}(\.gz)?', fl) for fl in fls]
-    fls = [fl for fl in fls if fl is not None]
-    if not fls:
-        return None, None
-    else:
-        return fls[-1].group(0), fls[-1].group("date")
+    log_name_re = re.compile(r'nginx-access-ui\.log-(?P<date>\d{4}(0[1-9]|1[012])(0[1-9]|[12][0-9]|3[01]))(\.gz)?')
+
+    log_filename, log_date = None, None
+    for n, fl in enumerate(fls):
+        file_name_re_match = log_name_re.match(fl)
+        if file_name_re_match:
+            if n == 0:
+                log_filename = fl
+                log_date = log_name_re.match(fl).group("date")
+            else:
+                if log_date < file_name_re_match.group("date"):
+                    log_filename = fl
+                    log_date = log_name_re.match(fl).group("date")
+
+    return log_filename, log_date
 
 
-def open_log_file(log_name):
+def yield_line_from_log_file(log_name):
     """
     Генератор, который возвращает строки файла лога
     :param log_name: имя лога
@@ -91,13 +110,14 @@ def parse_line(line):
     return url, req_time
 
 
-def parse_log(log_path, report_size, errors_thrshold, smoke_test=False):
+def make_log_stats(log_path, report_size, errors_thrshold, log_parse_func=yield_line_from_log_file, smoke_test=False):
     """
     Функция, которая извлекает заданные статистики из лога
     :param log_dir: директория лога
     :param log_name: имя файла лога
     :param report_size: количество url-ов с наибольшим временем обработки, которые должны быть в отчете
     :param errors_thrshold: допустимый процент строк, обработанных с ошибкой
+    :param log_parse_func: функция для парсинга лога
     :param smoke_test: флаг для тестирования (обрабатывает первые 1000 строк если True)
     :return: отчет
     """
@@ -105,7 +125,7 @@ def parse_log(log_path, report_size, errors_thrshold, smoke_test=False):
     line_ct = 0
     req_time_total = 0
     errors_ct = 0
-    for n, line in enumerate(open_log_file(log_path)):
+    for n, line in enumerate(log_parse_func(log_path)):
         try:
             line_ct += 1
             url, req_time = parse_line(line)
@@ -125,6 +145,7 @@ def parse_log(log_path, report_size, errors_thrshold, smoke_test=False):
 
     if float(errors_ct) / line_ct >= errors_thrshold:
         logging.error("Error threshold exceeded")
+        raise ValueError("Error threshold exceeded")
 
     logging.info("parsed %s lines" % line_ct)
     result = ({'url': key,
@@ -156,6 +177,22 @@ def get_config(gen_config, cfg_path):
     return upd_config
 
 
+def save_report_to_file(log_stats, report_dir, log_date):
+    """
+    Записывает отчет в заданную директорию
+    :param log_stats: Статистика для записи в отчет
+    :param report_dir: Директория для отчета
+    :param log_date: Дата лога, по которому делался отчет
+    :return:
+    """
+
+    webpage_template = read_webpage_template()
+    rendered_temp = webpage_template.safe_substitute(dict(table_json=log_stats))
+    html_path = os.path.join(report_dir, 'report-%s.%s.%s.html' % (log_date[:4], log_date[4:6], log_date[6:8]))
+    with io.open(html_path, 'w') as fh:
+        fh.write(rendered_temp.decode('utf-8'))
+
+
 def main(local_config, smoke_test=False):
     """
     Пайплайн обработки лога.
@@ -183,18 +220,12 @@ def main(local_config, smoke_test=False):
             logging.info("No logs found to parse")
             return
 
-        result = parse_log(log_path=os.path.join(local_config['LOG_DIR'], log_name),
-                           report_size=local_config['REPORT_SIZE'],
-                           errors_thrshold=local_config['ERRORS_THRSH'],
-                           smoke_test=smoke_test)
+        log_stats = make_log_stats(log_path=os.path.join(local_config['LOG_DIR'], log_name),
+                                   report_size=local_config['REPORT_SIZE'],
+                                   errors_thrshold=local_config['ERRORS_THRSH'],
+                                   smoke_test=smoke_test)
 
-        rendered_temp = webpage_template.safe_substitute(dict(table_json=result))
-
-        html_path = os.path.join(local_config['REPORT_DIR'], 'report-%s.%s.%s.html' % (log_date[:4],
-                                                                                 log_date[4:6], log_date[6:8]))
-        with io.open(html_path, 'w') as fh:
-            fh.write(rendered_temp.decode('utf-8'))
-
+        save_report_to_file(log_stats, local_config['REPORT_DIR'], log_date)
         os.rename(os.path.join(local_config['LOG_DIR'], log_name),
                   os.path.join('done', log_name))
     except:
